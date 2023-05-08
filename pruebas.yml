@@ -1,0 +1,451 @@
+--- 
+AWSTemplateFormatVersion: 2010-09-09
+Description: "CI/CD pipeline for HTS"
+Parameters: 
+  BranchName: 
+    Default: development
+    Description: "Choose a branch of the repository."
+    Type: String
+    NoEcho: false
+  Enviroments: 
+    AllowedValues: 
+      - development
+      - staging
+      - preprod
+      - production
+    Default: "development"
+    Description: "Enviroment name. Default is development environment."
+    Type: String
+    NoEcho: false
+  PipelineName: 
+    Default: ""
+    Description: "Enter the pipeline name. You cannot edit the pipeline name after it is created."
+    Type: String
+    NoEcho: false
+  ProjectName: 
+    Default: ""
+    Description: "Create build project. A project name must be 2 to 255 characters."
+    Type: String
+    NoEcho: false
+  RepositoryName: 
+    Description: "Choose a repository that you have already created where you have pushed your source code."
+    Type: String
+    NoEcho: false
+Resources: 
+
+  CodeBuildServiceProject:
+        Type: AWS::CodeBuild::Project
+        Properties:
+            Name: !Sub "codebuild-service-${AWS::StackName}-${Enviroments}"
+            Description: "Build jar file for microservices"
+            Artifacts:
+                # Type: NO_ARTIFACTS
+                Type: CODEPIPELINE
+            SourceVersion: !Sub "refs/heads/${BranchName}"
+            Source:
+                Type: CODEPIPELINE
+                BuildSpec: buildspec.yml
+            Environment:
+                ComputeType: BUILD_GENERAL1_SMALL
+                Image: aws/codebuild/standard:5.0
+                Type: LINUX_CONTAINER
+                PrivilegedMode: true
+                EnvironmentVariables:
+                    - Name: AWS_ECR_REPOSITORY_URL
+                      Value: '624369912726.dkr.ecr.us-east-1.amazonaws.com'
+                    - Name: REGION
+                      Value: 'us-east-1'
+                    - Name: ACCOUNT_ID
+                      Value: '624369912726'
+            ServiceRole: !Ref CodeBuildServiceRole
+
+  CodeBuildReview:
+        Type: AWS::CodeBuild::Project
+        Properties:
+            Name: !Sub "codebuild-review-${AWS::StackName}-${Enviroments}"
+            Description: "Code review for microservices"
+            Artifacts:
+                # Type: NO_ARTIFACTS
+                Type: CODEPIPELINE
+            SourceVersion: !Sub "refs/heads/${BranchName}"
+            Source:
+                Type: CODEPIPELINE
+                BuildSpec: review.yml
+            Environment:
+                ComputeType: BUILD_GENERAL1_SMALL
+                Image: aws/codebuild/standard:5.0
+                Type: LINUX_CONTAINER
+                PrivilegedMode: true
+            ServiceRole: !Ref CodeBuildServiceRole
+
+
+  # CodeBuildServiceProject: 
+  #   Type: AWS::CodeBuild::Project
+  #   Properties: 
+  #     Name: codebuild-hts-backend-development
+  #     Description: "Build jar file for microservices"
+  #     Artifacts: 
+  #       Type: CODEPIPELINE
+  #     SourceVersion: 'refs/heads/development'
+  #     Source: 
+  #       Type: CODEPIPELINE
+  #       BuildSpec: buildspec.yml
+  #     Enviroment:
+  #       ComputeType: BUILD_GENERAL1_SMALL
+  #       Image: aws/codebuild/standard:5.0
+  #       Type: LINUX_CONTAINER
+  #       PrivilegedMode: true
+  #       EnvironmentVariables: 
+  #         - Name: AWS_ECR_REPOSITORY_URL
+  #           Value: '624369912726.dkr.ecr.us-east-1.amazonaws.com'
+  #         - Name: REGION
+  #           Value: 'us-east-1'
+  #         - Name: ACCOUNT_ID
+  #           Value: '624369912726'
+  #     ServiceRole: !Ref 'CodeBuildServiceRole'
+  #     TimeoutInMinutes: 20
+  # CodeBuildReview: 
+  #   Properties: 
+  #     Artifacts: 
+  #       Type: CODEPIPELINE
+  #     Description: "Code review for microservices"
+  #     Enviroment: 
+  #       ComputeType: BUILD_GENERAL1_SMALL
+  #       Image: "aws/codebuild/standard:5.0"
+  #       PrivilegedMode: true
+  #       Type: LINUX_CONTAINER
+  #     Name: !Sub "codebuild-review-${AWS::StackName}-${Enviroments}"
+  #     ServiceRole: !Ref CodeBuildServiceRole
+  #     Source: 
+  #       BuildSpec: "review.yml"
+  #       Type: CODEPIPELINE
+  #     SourceVersion: !Sub "refs/heads/${BranchName}"
+  #     TimeoutInMinutes: 20
+  #   Type: "AWS::CodeBuild::Project"
+  
+  CodeBuildServicePolicy: 
+    Properties: 
+      PolicyDocument: 
+        Statement: 
+          - 
+            Action: 
+              - "logs:CreateLogGroup"
+              - "logs:CreateLogStream"
+              - "logs:PutLogEvents"
+              - "ecr:GetAuthorizationToken"
+            Effect: Allow
+            Resource:
+              - "*" 
+              - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*"
+              - !Sub "arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/*"
+          - 
+            Action: 
+              - "codecommit:GitPull"
+              - "ecr:InitiateLayerUpload"
+              - "logs:CreateLogGroup"
+              - "logs:PutLogEvents"
+              - "codebuild:CreateReportGroup"
+              - "codebuild:CreateReport"
+              - "codebuild:UpdateReport"
+              - "codebuild:BatchPutCodeCoverages"
+              - "ecr:*"
+              - "codebuild:BatchPutTestCases"
+            Effect: Allow
+            Resource: !Sub "arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${RepositoryName}"
+          - 
+            Action: 
+              - "ecr:GetAuthorizationToken"
+              - "ecr:BatchCheckLayerAvailability"
+              - "ecr:GetDownloadUrlForLayer"
+              - "ecr:BatchGetImage"
+              - "ecr:CompleteLayerUpload"
+              - "ecr:InitiateLayerUpload"
+              - "ecr:PutImage"
+              - "ecr:UploadLayerPart"
+            Effect: Allow
+            Resource: "*"
+          - 
+            Action: 
+              - "codebuild:CreateReportGroup"
+              - "codebuild:CreateReport"
+              - "codebuild:UpdateReport"
+              - "codebuild:BatchPutTestCases"
+            Effect: Allow
+            Resource: !Sub "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:report-group/${AWS::StackName}-${Enviroments}-*"
+        Version: 2012-10-17
+      PolicyName: !Sub "CodeBuildServicePolicy-${Enviroments}"
+      Roles: 
+        - !Ref CodeBuildServiceRole
+    Type: "AWS::IAM::Policy"
+  
+  CodeBuildServiceRole: 
+    Type: AWS::IAM::Role
+    Properties: 
+      Path: /
+      RoleName: !Sub codebuild-serv-role-${AWS::StackName}-${Enviroments}
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - 
+            Action: sts:AssumeRole
+            Effect: Allow
+            Principal: 
+              Service: codebuild.amazonaws.com
+      Policies:
+        - PolicyName: !Sub CodePipelineServicePolicy-${Enviroments}
+          PolicyDocument:
+            Version: '2012-10-17' 
+            Statement:
+              - Resource: arn:aws:s3:::code-build-hts-backend/*
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:GetBucketVersioning 
+              - 
+                Action: 
+                  - "logs:CreateLogGroup"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                Effect: Allow
+                Resource: "*"
+              - 
+                Action: 
+                  - "codecommit:GitPull"
+                  - "s3:GetBucketAcl"
+                  - "codecommit:BatchGetRepositories"
+                  - "codecommit:Get*"
+                  - "codecommit:List*"
+                  - "codecommit:CancelUploadArchive"
+                  - "codecommit:UploadArchive"
+                Effect: Allow
+                Resource: 
+                  - "*"
+                  - !Sub "arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${RepositoryName}"
+              - 
+                Action: 
+                  - "ecr:GetAuthorizationToken"
+                  - "ecr:BatchCheckLayerAvailability"
+                  - "ecr:GetDownloadUrlForLayer"
+                  - "ecr:BatchGetImage"
+                  - "ecr:CompleteLayerUpload"
+                  - "ecr:InitiateLayerUpload"
+                  - "ecr:PutImage"
+                  - "ecr:UploadLayerPart"
+                Effect: Allow
+                Resource: 
+                  - "*"
+              - 
+                Action: 
+                  - "s3:GetBucketAcl"
+                  - "codebuild:StartBuild"
+                  - "codebuild:BatchGetBuilds"
+                  - "codepipeline:StartPipelineExecution"
+                  - "codebuild:CreateReportGroup"
+                  - "codebuild:CreateReport"
+                  - "codebuild:UpdateReport"
+                  - "codebuild:BatchPutTestCases"
+                Effect: Allow
+                Resource: 
+                  - "*"
+              - 
+                Action: 
+                  - "s3:GetBucketAcl"
+                  - "logs:CreateLogGroup"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                  - "ecr:GetAuthorizationToken"
+                Effect: Allow
+                Resource: "*"
+              - 
+                Action: 
+                  - "codecommit:GitPull"
+                  - "codebuild:CreateReportGroup"
+                  - "codebuild:CreateReport"
+                  - "codebuild:UpdateReport"
+                  - "codebuild:BatchPutCodeCoverages"
+                  - "codebuild:BatchPutTestCases"
+                  - "ecr:*"
+                  - "logs:*"
+                  - s3:GetBucketLocation
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:GetBucketAcl
+                Effect: Allow
+                Resource: 
+                  - "*"
+  CodePipelineServiceRole: 
+    Type: "AWS::IAM::Role"
+    Properties: 
+      Path: /
+      RoleName: !Sub "codepipeline-service-role-${AWS::StackName}-${Enviroments}"
+      AssumeRolePolicyDocument: 
+        Version: '2012-10-17'
+        Statement: 
+          - 
+            Effect: Allow
+            Action: sts:AssumeRole
+            Principal: 
+              Service: 
+                - codepipeline.amazonaws.com
+  CodePipelinePolicy:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        Description: allows cloudformation to create/update/delete IAM Roles
+        ManagedPolicyName: !Sub CodePipeline-Policy-${Enviroments}
+        Roles:
+          - !Ref CodePipelineServiceRole
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - 
+              Sid: CodeCommitPermissions
+              Effect: Allow
+              Action:
+                - codecommit:BatchGetRepositories
+                - codecommit:Get*
+                - codecommit:GitPull
+                - codecommit:List*
+                - codecommit:CancelUploadArchive
+                - codecommit:UploadArchive
+                - s3:*
+              Resource:
+                - !Sub arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${RepositoryName}
+            -  # Allow codepipeline to pass role to codebuild
+              Sid: PassRolePolicy
+              Effect: Allow
+              Action:
+                - iam:PassRole
+              Resource:
+                - '*'
+            -  # Allow codepipeline to start codebuild
+              Sid: CodeBuildPolicy
+              Effect: Allow
+              Action:
+                - codebuild:StartBuild
+                - codebuild:BatchGetBuilds
+                - codepipeline:StartPipelineExecution
+              Resource:
+                - !Sub "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/*"
+            - 
+              Sid: BucketPolicy
+              Resource:
+                - "arn:aws:s3:::code-build-hts-backend"
+                - "*"
+              Effect: Allow
+              Action:
+                - s3:PutObject
+                - s3:GetObject
+                - s3:GetObjectVersion
+                - s3:GetBucketVersioning
+            - 
+              Sid: LogsPolicy
+              Resource: "*"
+              Effect: Allow
+              Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - ecr:GetAuthorizationToken    
+            - 
+              Sid: ECRPolicy
+              Resource: !Sub arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${RepositoryName}
+              Effect: Allow
+              Action:
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:PutImage
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload   
+            - 
+              Sid: ECRPolicy2
+              Resource: 
+                  - arn:aws:ecr:*:*:repository/*
+                  - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${RepositoryName}-${Enviroments}
+                  - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${RepositoryName}-${Enviroments}:*
+                  - !Sub arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${RepositoryName}
+                  - !Sub arn:aws:s3:::codepipeline-${AWS::Region}-*
+                  - !Sub arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:report-group/${RepositoryName}-${Enviroments}-*
+              Effect: Allow
+              Action:
+                  - codecommit:GitPull
+                  - codebuild:CreateReportGroup
+                  - codebuild:CreateReport
+                  - codebuild:UpdateReport
+                  - codebuild:BatchPutCodeCoverages
+                  - codebuild:BatchPutTestCases   
+                  - ecr:*                 
+                  - logs:*
+                  - s3:*
+  PipelineService: 
+    DependsOn:
+      - CodePipelinePolicy
+    Type: AWS::CodePipeline::Pipeline
+    Properties: 
+      RestartExecutionOnUpdate: true
+      RoleArn: !GetAtt CodePipelineServiceRole.Arn
+      Name: !Sub "${PipelineName}-${Enviroments}"
+      ArtifactStore:
+          Type: S3
+          Location: "code-build-hts-backend"
+      Stages: 
+        - 
+          Actions: 
+            - 
+              ActionTypeId: 
+                Category: Source
+                Owner: AWS
+                Provider: CodeCommit
+                Version: "1"
+              Configuration: 
+                BranchName: !Sub "${BranchName}"
+                PollForSourceChanges: false
+                RepositoryName: !Sub "${RepositoryName}"
+              Name: Source
+              OutputArtifacts: 
+                - 
+                  Name: SourceArtifact
+              RunOrder: 1
+          Name: Source
+        - 
+          Actions: 
+            - 
+              ActionTypeId: 
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: 1
+              Configuration: 
+                ProjectName: !Ref CodeBuildServiceProject
+              InputArtifacts: 
+                - 
+                  Name: SourceArtifact
+              Name: CodeBuild
+              OutputArtifacts: 
+                - 
+                  Name: buildDevelopmentArtifact
+              RunOrder: 2
+          Name: Build
+        # - 
+        #   Actions: 
+        #     - 
+        #       ActionTypeId: 
+        #         Category: Build
+        #         Owner: AWS
+        #         Provider: CodeBuild
+        #         Version: "1"
+        #       Configuration: 
+        #         ProjectName: !Ref CodeBuildReview
+        #       InputArtifacts: 
+        #         - 
+        #           Name: developmentArtifact
+        #       Name: Review
+        #       OutputArtifacts: 
+        #         - 
+        #           Name: buildDevelopmentArtifact
+        #       RunOrder: 3
+        #   Name: CodeReview
+    
